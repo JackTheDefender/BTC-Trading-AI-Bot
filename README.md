@@ -1,2 +1,2 @@
-# Btc-Trading-Bot
+# Btc-Trading-AI-Bot
 15mins
