@@ -59,14 +59,6 @@ raw=get_candles()
 print(raw.shape,raw.index.min(),raw.index.max())
 display(raw.tail())
 
-# Warning: Found 36 missing candle(s). Reindexing and filling gaps...
-# (17279, 5) 2026-05-11 16:45:00+00:00 2026-11-07 16:15:00+00:00
-# open	high	low	close	volume
-# 2026-11-07 15:15:00+00:00	75882.06	75887.36	75850.01	75886.49	0.00230
-# 2026-11-07 15:30:00+00:00	75869.51	75869.51	75766.49	75810.91	0.14407
-# 2026-11-07 15:45:00+00:00	75809.88	75809.88	75602.93	75740.00	0.18477
-# 2026-11-07 16:00:00+00:00	75758.40	75789.48	75746.36	75783.91	0.03150
-# 2026-11-07 16:15:00+00:00	75783.90	75802.82	75765.36	75794.13	0.01730
 
 # Causal technical features and next-candle target
 FEE_BPS=10.0 # per side, illustrative
@@ -107,7 +99,7 @@ FEATURES=['ret1','ret2','ret4','ret8','ret16','range','body','vol_z','rsi','macd
 data=full.dropna(subset=FEATURES+['future_ret','atr']).copy()
 print('Label counts:',data.target.value_counts().sort_index().to_dict(), 'Threshold:',LABEL_THRESHOLD)
 assert len(data)>3000
-# Label counts: {0: 1093, 1: 15015, 2: 1122} Threshold: 0.0026
+
 # Time-ordered folds and leak-free sequence scaling
 LOOKBACK=48; N_CLASSES=3
 # two expanding chronological folds: train [0,60%], validate [60%,70%], test [70%,80%]; then train [0,70%], validate [70%,80%], test [80%,100%].
@@ -202,6 +194,7 @@ assert not pred.index.duplicated().any()
 print('Out-of-sample classification report:')
 print(classification_report(pred.truth,pred[['p_sell','p_hold','p_buy']].to_numpy().argmax(axis=1),labels=[0,1,2],target_names=['SELL','HOLD','BUY'],zero_division=0))
 ConfusionMatrixDisplay.from_predictions(pred.truth,pred[['p_sell','p_hold','p_buy']].to_numpy().argmax(axis=1),display_labels=['SELL','HOLD','BUY']);plt.show()
+
 # Convert probabilities into trade decisions
 MIN_CONF=0.50
 p=pred[['p_sell','p_hold','p_buy']].to_numpy()
@@ -210,6 +203,7 @@ pred['signal']=np.where((p[:,2]>=MIN_CONF)&(p[:,2]>p[:,0])&(p[:,2]>p[:,1]),2,
 pred['confidence']=p.max(axis=1)
 print(pred.signal.map({0:'SELL',1:'HOLD',2:'BUY'}).value_counts())
 display(pred.tail(10))
+
 # Event-driven long-only spot backtest with next-open fills
 INITIAL_CASH=10_000.0
 RISK_PER_TRADE=.005 # 0.5% equity at stop, excluding gaps and execution costs
@@ -275,6 +269,7 @@ def backtest(predictions, market):
         records[-1]=(ts,cash,cash,0)
     curve=pd.DataFrame(records,columns=['timestamp','equity','cash','qty']).set_index('timestamp')
     return curve,pd.DataFrame(trades)
+    
 # Backtest each test fold independently; concatenate per-fold normalized returns for an overall walk-forward series.
 curves=[];trades_list=[]
 for f in sorted(pred.fold.unique()):
@@ -283,14 +278,17 @@ for f in sorted(pred.fold.unique()):
     curve['fold']=f;curves.append(curve)
     if len(trade):trade['fold']=f;trades_list.append(trade)
 trades=pd.concat(trades_list,ignore_index=True) if trades_list else pd.DataFrame()
+
 # Compute combined return path, resetting equity to 1 at the beginning of each fold.
 returns=pd.concat([c.equity.pct_change().fillna(c.equity.iloc[0]/INITIAL_CASH-1) for c in curves]).sort_index()
 combined_equity=INITIAL_CASH*(1+returns).cumprod()
 print('Number of closed trades:',len(trades))
 display(trades.tail() if len(trades) else pd.DataFrame({'info':['No trades under current thresholds']}))
+
 # Number of closed trades: 1
 entry_time	exit_time	entry	exit	net_pnl	reason	fold
 0	2026-10-30 00:30:00+00:00	2026-10-30 01:00:00+00:00	77001.563541	77228.684442	2.364167	SELL signal	2
+
 # Metrics and visualizations
 equity=combined_equity
 ret=returns
@@ -309,6 +307,7 @@ print(pd.Series({'Net return':f'{net_return:.2%}','Max drawdown':f'{max_dd:.2%}'
                  'Profit factor':round(pf,3) if np.isfinite(pf) else 'N/A'}))
 plt.figure(figsize=(12,4));plt.plot(equity.index,equity.values);plt.title('Walk-forward simulated equity (fees + slippage)');plt.ylabel('USDT');plt.grid(True);plt.show()
 plt.figure(figsize=(12,3));plt.plot(equity.index,equity/equity.cummax()-1);plt.title('Drawdown');plt.grid(True);plt.show()
+
 # Latest completed candle prediction (research signal)
 scaler,lstm,transformer,xgb,w=trained[-1]
 latest=full.dropna(subset=FEATURES).copy()
@@ -319,6 +318,7 @@ signal='BUY' if prob[2]>=MIN_CONF and prob[2]>max(prob[0],prob[1]) else ('SELL' 
 print('Completed candle UTC:',latest.index[-1]);print('Last close:',latest.close.iloc[-1]);print('Signal:',signal)
 print(dict(zip(['SELL','HOLD','BUY'],np.round(prob,4))))
 print('Highest model probability:',round(float(prob.max()),4),'(not necessarily calibrated confidence)')
+
 # Completed candle UTC: 2026-11-07 16:15:00+00:00
 Last close: 75794.13
 Signal: HOLD
